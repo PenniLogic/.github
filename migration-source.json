@@ -1,0 +1,90 @@
+{
+  "source_repository": "PenniLogic-old/.github-private",
+  "source_commit": "ecb6485f3e0fe684458c67559868da3e8628c46f",
+  "source_history_copied": false,
+  "private_discussions_or_actions_logs_copied": false,
+  "unmerged_changes_copied": false,
+  "files": [
+    {
+      "path": "agents/pennilogic-accessibility-reviewer.agent.md",
+      "source_path": "agents/pennilogic-accessibility-reviewer.agent.md",
+      "source_sha256": "f9201aae8ba3a8113761a20596e9b3cda084481ffece29d8b082664c0d453c5e",
+      "export_sha256": "f9201aae8ba3a8113761a20596e9b3cda084481ffece29d8b082664c0d453c5e"
+    },
+    {
+      "path": "agents/pennilogic-compliance-reviewer.agent.md",
+      "source_path": "agents/pennilogic-compliance-reviewer.agent.md",
+      "source_sha256": "0977f67064e21ea766762fe5e7b00ce09f0456ec48b86664f0a76c07491bac52",
+      "export_sha256": "0977f67064e21ea766762fe5e7b00ce09f0456ec48b86664f0a76c07491bac52"
+    },
+    {
+      "path": "agents/pennilogic-contract-reviewer.agent.md",
+      "source_path": "agents/pennilogic-contract-reviewer.agent.md",
+      "source_sha256": "313a18cf6e0f9815cb442d8ee47d3112b0ee905b78cd777bc6afdd50f1184bfb",
+      "export_sha256": "313a18cf6e0f9815cb442d8ee47d3112b0ee905b78cd777bc6afdd50f1184bfb"
+    },
+    {
+      "path": "agents/pennilogic-core-reviewer.agent.md",
+      "source_path": "agents/pennilogic-core-reviewer.agent.md",
+      "source_sha256": "7bb3c69135bb7841e432b09b9f7d894de132cd9bfe787604f9a250e6ed73fff9",
+      "export_sha256": "7bb3c69135bb7841e432b09b9f7d894de132cd9bfe787604f9a250e6ed73fff9"
+    },
+    {
+      "path": "agents/pennilogic-design-reviewer.agent.md",
+      "source_path": "agents/pennilogic-design-reviewer.agent.md",
+      "source_sha256": "a4877f76bab3d783e1eeb7a322a17f100f6b526eaa3bf3d04fc363089d5f8b8d",
+      "export_sha256": "a4877f76bab3d783e1eeb7a322a17f100f6b526eaa3bf3d04fc363089d5f8b8d"
+    },
+    {
+      "path": "agents/pennilogic-developer.agent.md",
+      "source_path": "agents/pennilogic-developer.agent.md",
+      "source_sha256": "b6cf50cb855b30452c0ea0d7388f2d93917e53c8f7c3dafc1033b4242751c2fc",
+      "export_sha256": "2b8c4982633dca0f4614579ea78b3e692848ec611248591b28961b67c32d7d55",
+      "adaptation": "Use actual task prerequisites and public foundation-check scope rather than stale imported readiness labels."
+    },
+    {
+      "path": "agents/pennilogic-money-reviewer.agent.md",
+      "source_path": "agents/pennilogic-money-reviewer.agent.md",
+      "source_sha256": "b128f22590de12c539e69392b63d4ab5b77189833a1e966bf44e450b5f1f2b9e",
+      "export_sha256": "b128f22590de12c539e69392b63d4ab5b77189833a1e966bf44e450b5f1f2b9e"
+    },
+    {
+      "path": "agents/pennilogic-privacy-reviewer.agent.md",
+      "source_path": "agents/pennilogic-privacy-reviewer.agent.md",
+      "source_sha256": "55ab657e2f72704ca272bec3341f5c9474b6cf0d03dfe0f6ade42bac39a3c23d",
+      "export_sha256": "55ab657e2f72704ca272bec3341f5c9474b6cf0d03dfe0f6ade42bac39a3c23d"
+    },
+    {
+      "path": "agents/pennilogic-producer.agent.md",
+      "source_path": "agents/pennilogic-producer.agent.md",
+      "source_sha256": "db84268e89b60679b19bab2a48e3ca7c9e74101768536654cdb9afc11f900fa7",
+      "export_sha256": "1e78bd163d0b6889cfa2556a760b7b644dae9d5b9ac3fa1073a9aae8d902b8ef",
+      "adaptation": "Resolve imported backlog labels explicitly and apply the new risk-based review policy without inventing product acceptance."
+    },
+    {
+      "path": "agents/pennilogic-qa.agent.md",
+      "source_path": "agents/pennilogic-qa.agent.md",
+      "source_sha256": "f40567e74a4a3783780d5f60b936007d840de6074535d14304c97bafbca83ce9",
+      "export_sha256": "f40567e74a4a3783780d5f60b936007d840de6074535d14304c97bafbca83ce9"
+    },
+    {
+      "path": "agents/pennilogic-release-reviewer.agent.md",
+      "source_path": "agents/pennilogic-release-reviewer.agent.md",
+      "source_sha256": "ddaff09d6cf5721361a4f0e4d9fa266c8d88472b81e4c11721130a05d9e17a7b",
+      "export_sha256": "547e0d17dc904cdbc616cac81136f0d0654c44e5aecfd5fa66885f721ecd8dcd",
+      "adaptation": "Refer to reviewed source and independent review reports rather than mandatory signatures or the retired custom publisher."
+    },
+    {
+      "path": "agents/pennilogic-reliability-reviewer.agent.md",
+      "source_path": "agents/pennilogic-reliability-reviewer.agent.md",
+      "source_sha256": "bd0a9bb3f8f316c37a64d773f211cbca398d8394fd6c4e0b5453393e4f84bd67",
+      "export_sha256": "bd0a9bb3f8f316c37a64d773f211cbca398d8394fd6c4e0b5453393e4f84bd67"
+    },
+    {
+      "path": "agents/pennilogic-security-reviewer.agent.md",
+      "source_path": "agents/pennilogic-security-reviewer.agent.md",
+      "source_sha256": "2dafbc698bf1a0a12dd4f376809970613665ff970291eaaf1a273d7622eef387",
+      "export_sha256": "2dafbc698bf1a0a12dd4f376809970613665ff970291eaaf1a273d7622eef387"
+    }
+  ]
+}
