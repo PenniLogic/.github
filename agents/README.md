@@ -36,6 +36,13 @@ creation or session messaging.
 - Every profile has a non-empty `name` and `description` and an explicit `tools` list written
   with primary aliases only (compatible aliases and case variants are rejected so that the
   allowlist reads the same to people and to the platform).
+- A profile's frontmatter declares only the keys `name`, `description`, `tools`,
+  `disable-model-invocation` and `user-invocable` (`KNOWN_KEYS` in
+  `scripts/check_agent_profiles.py`, enumerated from the thirteen profiles). Keys are
+  case-sensitive for YAML and for the platform, so `Tools: ["*"]` beside a valid `tools` is not
+  an inert spelling variant but an unknown key, and a typo'd capability key is no longer silent:
+  the lint fails naming the profile and the key, escaped and bounded like a tool entry. Adding a
+  key is a reviewed lint change, not a profile edit (issue #11, PR #10 finding S3).
 - Each profile's `name` is the display form of its file name (`PenniLogic Core Reviewer` for
   `pennilogic-core-reviewer.agent.md`; case and spacing are free, the words are not). The file
   name, not the display name, decides which role's rules apply, so a file cannot present one
@@ -58,7 +65,11 @@ creation or session messaging.
 - Profiles do not declare `mcp-servers`; MCP servers are repository or organization settings.
 - Every `*.agent.md` file is the Developer, the Producer or a `review_roles` profile; an
   unclassified profile fails the check, and so does any other file in this directory apart
-  from this note.
+  from this note. The policy is checked in the other direction too: every `review_roles` value
+  must name an existing profile of the reviewer role class of the capability matrix, so a
+  policy that lists `pennilogic-developer` or `pennilogic-producer` as a review role fails as
+  self-contradictory, even though the file itself keeps its own role's rules and no capability
+  widens (issue #11, PR #10 finding C2).
 - Every profile body carries the shared instruction-provenance rule verbatim, once, between
   `<!-- instruction-provenance-rule v1 -->` and `<!-- /instruction-provenance-rule -->`
   (issue #4, threat-model finding E01-F03): instructions are only the owner-published issue
@@ -143,9 +154,10 @@ unclassified tool and fails without needing a row here.
 
 A violation is reported as `<profile>: <role> profiles must not hold the <class> capability
 (tool '<name>')`; the pinned-allowlist and identity messages stay separate, so one planted tool
-can produce two lines, each naming its own rule. Messages carry role, class, file, tool and
-frontmatter-key names only; an echoed tool entry or key is escaped to ASCII and cut to 60
-characters of output, so no entry can grow a line through long escapes.
+can produce two lines, each naming its own rule. Messages carry role, class, file, tool,
+frontmatter-key and policy role and profile names only; an echoed tool entry, key or policy name
+is escaped to ASCII and cut to 60 characters of output, so no entry can grow a line through long
+escapes.
 
 Decision record (issue #1, 2026-09-30): the Producer keeps `["read", "search"]`; its duty reads
 the issue text supplied by the coordinator and the preserved backlog entry in the docs checkout
@@ -169,9 +181,12 @@ too, although YAML would allow it. `scripts/tests/test_agent_profiles.py`
 asserts that the committed profiles pass and that planted violations fail, including a profile
 that omits or rewrites either shared rule, a Developer with a review tool, a Producer with a
 sub-agent launcher, a reviewer with a merge or push tool, an unclassified tool, a display name
-that claims another role, a `tools` line the platform cannot parse, and a lint configuration
-whose pinned allowlist steps outside the matrix; it also checks that the two tables above match
-the script. `scripts/tests/test_instruction_provenance.py` applies the documented provenance
+that claims another role, a `tools` line the platform cannot parse, an unknown or case-variant
+frontmatter key (including a 10 kB, an ANSI and a homoglyph key, each reported on one bounded
+printable line), a `review_roles` value that names the Developer, the Producer or a missing
+profile, and a lint configuration whose pinned allowlist steps outside the matrix; it also checks
+that the two tables above and the key allowlist match the script.
+`scripts/tests/test_instruction_provenance.py` applies the documented provenance
 procedure to the synthetic fixture. The generated CI workflow runs all three commands.
 Agreement between duty text and allowlist, and whether a session actually obeys the provenance
 and least-privilege rules, are reviewed, not linted.

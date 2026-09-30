@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import json
 from pathlib import Path
 import re
 import shutil
@@ -1149,6 +1150,355 @@ class PlantedViolationTest(FixtureMixin, unittest.TestCase):
         (root / lint.POLICY_FILE).unlink()
         with self.assertRaises(lint.ProfileError):
             lint.check(root)
+
+
+class FrontmatterKeyAllowlistTest(FixtureMixin, unittest.TestCase):
+    """Issue #11, PR #10 finding S3: a key outside KNOWN_KEYS fails, naming the profile and the key."""
+
+    UNKNOWN = "unknown frontmatter key"
+    ALLOWLIST = ("a shared profile declares only name, description, tools, disable-model-invocation, "
+                 "user-invocable")
+
+    def plant_line(self, root, stem, line):
+        """Add `line` to the frontmatter of `stem`, after its last key (line 6), so it becomes line 7."""
+        self.replace(root, stem, "user-invocable: true\n", "user-invocable: true\n" + line + "\n")
+
+    def unknown(self, stem, key):
+        return f"{lint.PROFILE_DIR}/{stem}.agent.md: {self.UNKNOWN} {key}; {self.ALLOWLIST}"
+
+    def test_known_keys_are_exactly_the_keys_the_profiles_declare(self):
+        self.assertEqual(lint.KNOWN_KEYS,
+                         ("name", "description", "tools", "disable-model-invocation", "user-invocable"))
+        for path in lint.profile_paths(REPO):
+            fields = lint.parse_frontmatter(path.read_text(encoding="utf-8"))
+            self.assertEqual(tuple(fields), lint.KNOWN_KEYS, path.name)
+        self.assertFalse(set(lint.FORBIDDEN_KEYS) & set(lint.KNOWN_KEYS))
+        for key in lint.KNOWN_KEYS:
+            self.assertTrue(lint.FRONTMATTER_KEY.fullmatch(key), key)
+        self.assertEqual(self.ALLOWLIST, f"a shared profile declares only {', '.join(lint.KNOWN_KEYS)}")
+
+    def test_unknown_key_values_are_never_echoed_and_a_typoed_tools_key_is_signalled(self):
+        sentinel = "SENTINEL-DO-NOT-ECHO"
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", f"extra: {sentinel}\nmore: [\"{sentinel}\", \"*\"]")
+        problems = lint.check(root)
+        self.assertEqual(problems, [self.unknown("pennilogic-qa", "'extra'"),
+                                    self.unknown("pennilogic-qa", "'more'")])
+        self.assertNotIn(sentinel, "\n".join(problems))
+        # `Tools` typed for `tools`: before this rule the only signal was the omitted list; now the
+        # typo is named as well, and the platform-side effect (every tool enabled) stays reported.
+        root = self.make_root()
+        self.replace(root, "pennilogic-qa", 'tools: ["read", "search", "execute"]',
+                     'Tools: ["read", "search", "execute"]')
+        self.assertEqual(lint.check(root), [
+            self.unknown("pennilogic-qa", "'Tools'"),
+            f"{lint.PROFILE_DIR}/pennilogic-qa.agent.md: tools must be declared; "
+            "an omitted list enables every tool",
+        ])
+
+    def test_unknown_key_fails_in_every_role_naming_profile_and_key(self):
+        for stem in (lint.DEVELOPER, lint.PRODUCER, *REVIEWERS):
+            root = self.make_root()
+            self.plant_line(root, stem, "extra: value")
+            self.assertEqual(lint.check(root), [self.unknown(stem, "'extra'")], stem)
+        # Block-list and empty values under an unknown key are unknown all the same.
+        for line in ("extra:\n  - one\n  - two", "extra:", "extra: []", "extra: true"):
+            root = self.make_root()
+            self.plant_line(root, "pennilogic-qa", line)
+            self.assertEqual(lint.check(root), [self.unknown("pennilogic-qa", "'extra'")], line)
+
+    def test_case_variant_key_beside_the_real_key_is_unknown_not_a_variant(self):
+        # `Tools: ["*"]` beside a valid `tools`: the wildcard never reaches the tools rules (no
+        # wildcard or capability line), and the case variant is reported as the unknown key it is.
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", 'Tools: ["*"]')
+        self.assertEqual(lint.check(root), [self.unknown("pennilogic-qa", "'Tools'")])
+        cases = (
+            (lint.DEVELOPER, "Name: PenniLogic Security Reviewer", "Name"),
+            (lint.PRODUCER, "DESCRIPTION: other", "DESCRIPTION"),
+            ("pennilogic-core-reviewer", 'TOOLS: ["edit"]', "TOOLS"),
+            ("pennilogic-qa", "User-Invocable: false", "User-Invocable"),
+            ("pennilogic-qa", "disable_model_invocation: true", "disable_model_invocation"),
+            ("pennilogic-qa", "tool: read", "tool"),
+        )
+        for stem, line, key in cases:
+            root = self.make_root()
+            self.plant_line(root, stem, line)
+            self.assertEqual(lint.check(root), [self.unknown(stem, repr(key))], line)
+
+    def test_hostile_keys_produce_one_bounded_printable_line_each(self):
+        prefix = f"{lint.PROFILE_DIR}/pennilogic-qa.agent.md: "
+        # A 10 kB key matches FRONTMATTER_KEY, so it is parsed and echoed through quote(): cut after
+        # escaping to ECHO_LIMIT characters, the rest of the line is fixed text.
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", "k" * 10240 + ": x")
+        problems = lint.check(root)
+        self.assertEqual(len(problems), 1, problems)
+        line = problems[0]
+        self.assertTrue(line.startswith(prefix + self.UNKNOWN + " 'kkk"), line)
+        self.assertTrue(line.endswith("...'; " + self.ALLOWLIST), line)
+        self.assertLessEqual(line.count("k"), lint.ECHO_LIMIT)
+        self.assertEqual(len(line), len(self.unknown("pennilogic-qa", "")) + lint.ECHO_LIMIT)
+        self.assertTrue(line.isascii() and line.isprintable(), line)
+        # ANSI, homoglyph (Cyrillic o, Kelvin sign, fi ligature), zero-width space and NUL are not
+        # key characters: FRONTMATTER_KEY refuses the line and nothing of it is echoed.
+        hostile = ("evil\x1b[31mRED: x", 't\u043eols: ["*"]', "\u212aey: x", "\ufb01le: x",
+                   'tools\u200b: ["*"]', "tools\x00: x", "\x1b[2J\x1b[H: x")
+        for planted in hostile:
+            root = self.make_root()
+            self.plant_line(root, "pennilogic-qa", planted)
+            self.assertEqual(lint.check(root), [prefix + "malformed frontmatter at line 7"], ascii(planted))
+        # Through main(): exit 1, exactly one printable-ASCII stderr line per case, nothing on stdout.
+        argv = mock.patch.object(sys, "argv", ["check_agent_profiles.py"])
+        for planted in ("k" * 10240 + ": x", *hostile):
+            root = self.make_root()
+            self.plant_line(root, "pennilogic-qa", planted)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with argv, mock.patch.object(lint, "ROOT", root):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(lint.main(), 1, ascii(planted))
+            lines = stderr.getvalue().splitlines()
+            self.assertEqual(len(lines), 1, ascii(planted))
+            self.assertTrue(lines[0].isascii() and lines[0].isprintable(), ascii(planted))
+            self.assertEqual(stderr.getvalue(), lines[0] + "\n")
+            self.assertEqual(stdout.getvalue(), "")
+
+    def test_duplicate_and_spaced_spellings_of_a_key_meet_the_parser_first(self):
+        prefix = f"{lint.PROFILE_DIR}/pennilogic-qa.agent.md: "
+        allowlist = 'tools: ["read", "search", "execute"]'
+        # A duplicate unknown key is a parser error before the allowlist runs: one line, no unknown-key
+        # line. `Tools` twice duplicates `Tools`; `Tools` beside `tools` is no duplicate (case-sensitive).
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", "extra: a\nextra: b")
+        self.assertEqual(lint.check(root), [prefix + "duplicate frontmatter key 'extra'"])
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", 'Tools: ["*"]\nTools: ["*"]')
+        self.assertEqual(lint.check(root), [prefix + "duplicate frontmatter key 'Tools'"])
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", 'Tools: ["*"]\nTOOLS: ["*"]')
+        self.assertEqual(lint.check(root), [self.unknown("pennilogic-qa", "'Tools'"),
+                                            self.unknown("pennilogic-qa", "'TOOLS'")])
+        # A trailing ASCII space before the colon is stripped by the lint as by YAML: the same key.
+        root = self.make_root()
+        self.replace(root, "pennilogic-qa", allowlist, 'tools : ["read", "search", "execute"]')
+        self.assertEqual(lint.check(root), [])
+        root = self.make_root()
+        self.replace(root, "pennilogic-qa", "user-invocable: true", "user-invocable : true")
+        self.assertEqual(lint.check(root), [])
+        # Any other white space around a key is refused by the whitespace rule, so no key that differs
+        # from a known key only by white space can pass as unknown or as known.
+        spaced = ('tools\t: ["read", "search", "execute"]', 'tools\u00a0: ["read", "search", "execute"]',
+                  '\ttools: ["read", "search", "execute"]', 'tools\x0b: ["read", "search", "execute"]')
+        for planted in spaced:
+            root = self.make_root()
+            self.replace(root, "pennilogic-qa", allowlist, planted)
+            self.assertEqual(lint.check(root), [prefix + "malformed frontmatter at line 4"], ascii(planted))
+        root = self.make_root()
+        self.replace(root, "pennilogic-qa", "user-invocable: true", " user-invocable: true")
+        self.assertEqual(lint.check(root), [prefix + "unsupported nested frontmatter at line 6"])
+
+    def test_forbidden_key_keeps_its_own_message_and_the_key_check_precedes_the_tools_rules(self):
+        prefix = f"{lint.PROFILE_DIR}/{lint.PRODUCER}.agent.md: "
+        forbidden = prefix + "mcp-servers must not be declared in a shared profile"
+        root = self.make_root()
+        self.plant_line(root, lint.PRODUCER, "mcp-servers: none")
+        self.assertEqual(lint.check(root), [forbidden])
+        # Lines follow the order of the keys in the file.
+        root = self.make_root()
+        self.plant_line(root, lint.PRODUCER, "zeta: 1\nmcp-servers: none\nalpha: 2")
+        self.assertEqual(lint.check(root), [self.unknown(lint.PRODUCER, "'zeta'"), forbidden,
+                                            self.unknown(lint.PRODUCER, "'alpha'")])
+        # With `tools` omitted the profile check returns early, but only after the key check ran.
+        root = self.make_root()
+        self.write(root, lint.PRODUCER,
+                   "---\nname: PenniLogic Producer\ndescription: D\nextra: x\n---\n\nBody.\n\n"
+                   + RULE_BLOCK + "\n" + LEAST_PRIVILEGE_BLOCK)
+        self.assertEqual(lint.check(root), [
+            self.unknown(lint.PRODUCER, "'extra'"),
+            prefix + "tools must be declared; an omitted list enables every tool",
+        ])
+
+    def test_configuration_guards_for_the_allowlist_fail_closed(self):
+        root = self.make_root()
+        with mock.patch.object(lint, "KNOWN_KEYS", lint.KNOWN_KEYS + ("bad key",)):
+            with self.assertRaises(lint.ProfileError) as caught:
+                lint.check(root)
+            self.assertEqual(str(caught.exception),
+                             "lint configuration: known frontmatter key 'bad key' is not a parsable key")
+        with mock.patch.object(lint, "FORBIDDEN_KEYS", ("mcp-servers", "tools")):
+            with self.assertRaises(lint.ProfileError) as caught:
+                lint.check(root)
+            self.assertEqual(str(caught.exception),
+                             "lint configuration: frontmatter key 'tools' is both known and forbidden")
+        lint.check_configuration()
+        self.assertEqual(lint.check(root), [])
+
+    def test_main_reports_an_unknown_key_and_exits_1(self):
+        root = self.make_root()
+        self.plant_line(root, "pennilogic-qa", 'Tools: ["*"]')
+        argv = mock.patch.object(sys, "argv", ["check_agent_profiles.py"])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with argv, mock.patch.object(lint, "ROOT", root):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                self.assertEqual(lint.main(), 1)
+        self.assertEqual(stderr.getvalue(), self.unknown("pennilogic-qa", "'Tools'") + "\n")
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_readme_publishes_the_key_allowlist(self):
+        doc = (REPO / lint.PROFILE_DIR / "README.md").read_text(encoding="utf-8")
+        start = doc.index("declares only the keys")
+        end = doc.index("`KNOWN_KEYS`", start)
+        self.assertEqual(tuple(re.findall(r"`([^`]+)`", doc[start:end])), lint.KNOWN_KEYS)
+        flat = " ".join(doc.split())
+        fragments = (
+            "Keys are case-sensitive", "issue #11, PR #10 finding S3", "issue #11, PR #10 finding C2",
+            "an existing profile of the reviewer role class", "an unknown or case-variant frontmatter key",
+            "a `review_roles` value that names the Developer, the Producer or a missing profile",
+        )
+        for fragment in fragments:
+            self.assertIn(fragment, flat)
+
+
+class ReviewRolesPolicyTest(FixtureMixin, unittest.TestCase):
+    """Issue #11, PR #10 finding C2: every review_roles entry names an existing reviewer-class profile."""
+
+    SHAPE = f"{lint.POLICY_FILE}: review_roles must map role names to profile names"
+
+    def write_policy(self, root, mutate):
+        path = root / lint.POLICY_FILE
+        policy = json.loads(path.read_text(encoding="utf-8"))
+        mutate(policy)
+        path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+
+    def add_role(self, root, role, profile):
+        self.write_policy(root, lambda policy: policy["review_roles"].__setitem__(role, profile))
+
+    def class_line(self, role, profile, role_class):
+        return (f"{lint.POLICY_FILE}: review role {role!r} names the {role_class} profile {profile!r}; "
+                "a review role must be a reviewer-class profile")
+
+    def missing_line(self, role, profile):
+        return f"{lint.POLICY_FILE}: review role {role!r} names a missing profile {profile!r}"
+
+    def test_current_policy_passes_unchanged(self):
+        roles = lint.load_review_roles(REPO)
+        self.assertEqual(len(roles), 11)
+        stems = {path.name[: -len(".agent.md")] for path in lint.profile_paths(REPO)}
+        self.assertEqual(lint.check_review_roles(roles, stems), [])
+        for profile in roles.values():
+            self.assertEqual(lint.classify(profile, set(roles.values())), "reviewer", profile)
+            self.assertNotIn(profile, (lint.DEVELOPER, lint.PRODUCER))
+            self.assertIn(profile, stems)
+        self.assertEqual(lint.check(REPO), [])
+        self.assertEqual(lint.check(self.make_root()), [])
+
+    def test_developer_or_producer_as_an_added_review_role_fails(self):
+        for role, profile, role_class in (("implementer", lint.DEVELOPER, "developer"),
+                                          ("planner", lint.PRODUCER, "producer")):
+            root = self.make_root()
+            self.add_role(root, role, profile)
+            self.assertEqual(lint.check(root), [self.class_line(role, profile, role_class)])
+        # Both at once: one line each, sorted by role name, nothing else; the two files keep passing
+        # their own role's rules, so the contradiction is reported without any capability widening.
+        root = self.make_root()
+        self.write_policy(root, lambda policy: policy["review_roles"].update(
+            {"planner": lint.PRODUCER, "implementer": lint.DEVELOPER}))
+        self.assertEqual(lint.check(root), [self.class_line("implementer", lint.DEVELOPER, "developer"),
+                                            self.class_line("planner", lint.PRODUCER, "producer")])
+
+    def test_replacing_a_reviewer_by_the_developer_reports_the_policy_and_the_orphaned_profile(self):
+        root = self.make_root()
+        self.add_role(root, "core", lint.DEVELOPER)
+        self.assertEqual(lint.check(root), [
+            self.class_line("core", lint.DEVELOPER, "developer"),
+            f"{lint.PROFILE_DIR}/pennilogic-core-reviewer.agent.md: unclassified profile; only "
+            f"{lint.DEVELOPER}, {lint.PRODUCER} and the review_roles in {lint.POLICY_FILE} are allowed",
+        ])
+        # The Developer file is still checked as a developer, whatever the policy calls it.
+        self.write(root, lint.DEVELOPER, profile_text(lint.DEVELOPER, '["read", "search", "execute"]'))
+        self.assertViolation(root, lint.DEVELOPER, "developer profiles must list 'edit'")
+        self.assertNoViolation(root, lint.DEVELOPER, "reviewer")
+
+    def test_missing_profile_fails_and_each_rule_reports_its_own_line(self):
+        root = self.make_root()
+        self.add_role(root, "extra", "pennilogic-nobody")
+        self.assertEqual(lint.check(root), [self.missing_line("extra", "pennilogic-nobody")])
+        # The Developer listed as a review role while its file is absent: both rules speak.
+        root = self.make_root()
+        self.add_role(root, "implementer", lint.DEVELOPER)
+        self.profile(root, lint.DEVELOPER).unlink()
+        self.assertEqual(lint.check(root), [self.class_line("implementer", lint.DEVELOPER, "developer"),
+                                            self.missing_line("implementer", lint.DEVELOPER)])
+
+    def test_review_roles_shape_is_validated_before_any_profile_is_read(self):
+        shapes = ("pennilogic-core-reviewer", ["pennilogic-core-reviewer"], [], {}, None, 7, True,
+                  {"core": 7}, {"core": ""}, {"core": ["pennilogic-core-reviewer"]}, {"core": None},
+                  {"core": "pennilogic-core-reviewer", "qa": 1})
+        for shape in shapes:
+            root = self.make_root()
+            self.write_policy(root, lambda policy, shape=shape: policy.__setitem__("review_roles", shape))
+            with self.assertRaises(lint.ProfileError, msg=repr(shape)) as caught:
+                lint.check(root)
+            self.assertEqual(str(caught.exception), self.SHAPE, repr(shape))
+        root = self.make_root()
+        self.write_policy(root, lambda policy: policy.pop("review_roles"))
+        with self.assertRaises(lint.ProfileError) as caught:
+            lint.check(root)
+        self.assertEqual(str(caught.exception), self.SHAPE)
+        root = self.make_root()
+        (root / lint.POLICY_FILE).write_text('["pennilogic-core-reviewer"]', encoding="utf-8")
+        with self.assertRaises(lint.ProfileError) as caught:
+            lint.check(root)
+        self.assertEqual(str(caught.exception), self.SHAPE)
+        # main(): exit 1, one stderr line, nothing on stdout.
+        root = self.make_root()
+        self.write_policy(root, lambda policy: policy.__setitem__("review_roles", []))
+        argv = mock.patch.object(sys, "argv", ["check_agent_profiles.py"])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with argv, mock.patch.object(lint, "ROOT", root):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                self.assertEqual(lint.main(), 1)
+        self.assertEqual(stderr.getvalue(), f"Agent profile check failed: {self.SHAPE}\n")
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_policy_names_are_echoed_bounded_and_escaped(self):
+        root = self.make_root()
+        self.add_role(root, "r" * 5000, "p" * 5000)
+        problems = lint.check(root)
+        self.assertEqual(len(problems), 1, problems)
+        line = problems[0]
+        self.assertTrue(line.startswith(f"{lint.POLICY_FILE}: review role 'rrr"), line)
+        self.assertTrue(line.endswith("...' names a missing profile 'ppp" + "p" * 52 + "...'"), line)
+        self.assertEqual(len(line), len(self.missing_line("", "")) + 2 * lint.ECHO_LIMIT - 4)
+        self.assertTrue(line.isascii() and line.isprintable(), line)
+        root = self.make_root()
+        self.write_policy(root, lambda policy: policy["review_roles"].update(
+            {"c\u043ere": "evil\x1b[31mRED", "qa2": lint.DEVELOPER + "\u200b"}))
+        problems = lint.check(root)
+        self.assertEqual(problems, [
+            f"{lint.POLICY_FILE}: review role 'c\\u043ere' names a missing profile 'evil\\x1b[31mRED'",
+            f"{lint.POLICY_FILE}: review role 'qa2' names a missing profile 'pennilogic-developer\\u200b'",
+        ])
+        for line in problems:
+            self.assertTrue(line.isascii() and line.isprintable(), line)
+        # The plain case reads as before this rule existed.
+        root = self.make_root()
+        self.profile(root, "pennilogic-release-reviewer").unlink()
+        self.assertEqual(lint.check(root),
+                         [self.missing_line("release", "pennilogic-release-reviewer")])
+
+    def test_helper_is_deterministic_and_independent_of_the_file_system(self):
+        roles = {"qa": "pennilogic-qa", "core": lint.DEVELOPER, "aux": "pennilogic-nobody",
+                 "zz": lint.PRODUCER}
+        stems = {"pennilogic-qa", lint.DEVELOPER, lint.PRODUCER}
+        expected = [self.missing_line("aux", "pennilogic-nobody"),
+                    self.class_line("core", lint.DEVELOPER, "developer"),
+                    self.class_line("zz", lint.PRODUCER, "producer")]
+        self.assertEqual(lint.check_review_roles(roles, stems), expected)
+        self.assertEqual(lint.check_review_roles(dict(reversed(list(roles.items()))), stems), expected)
+        self.assertEqual(lint.check_review_roles({"core": "pennilogic-core-reviewer"},
+                                                 {"pennilogic-core-reviewer"}), [])
+        self.assertEqual(lint.check_review_roles({}, stems), [])
 
 
 if __name__ == "__main__":
