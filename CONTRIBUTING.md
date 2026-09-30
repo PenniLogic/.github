@@ -8,6 +8,8 @@ Install Python 3.14, Git, then run:
 ```text
 python scripts/setup.py
 python scripts/check_repository.py
+python scripts/check_agent_profiles.py
+python -m unittest discover -s scripts/tests
 ```
 
 `CI` runs on standard GitHub-hosted Ubuntu for pushes and pull requests, including

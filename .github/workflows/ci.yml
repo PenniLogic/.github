@@ -43,7 +43,7 @@
         },
         {
           "name": "Run checks",
-          "run": "python scripts/check_repository.py"
+          "run": "python scripts/check_repository.py\npython scripts/check_agent_profiles.py\npython -m unittest discover -s scripts/tests"
         }
       ]
     }
