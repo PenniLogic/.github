@@ -1,6 +1,6 @@
-"""Check shared agent profiles: tool allowlists against documented aliases, the per-role capability
-matrix and role policy, and the shared instruction-provenance and least-privilege rules that every
-profile must carry verbatim."""
+"""Check shared agent profiles: frontmatter keys against the known-key allowlist, tool allowlists
+against documented aliases, the per-role capability matrix and the review-role policy, and the shared
+instruction-provenance and least-privilege rules that every profile must carry verbatim."""
 
 import argparse
 from collections import namedtuple
@@ -92,7 +92,13 @@ ROLE_RULES = {
     "producer": {"tools": frozenset({"read", "search"}), "github": frozenset()},
     "reviewer": {"tools": frozenset({"read", "search", "execute"}), "github": frozenset()},
 }
-# Profile-level MCP servers could shadow the GitHub server or add undeclared tools.
+# Issue #11 (PR #10 finding S3): the frontmatter keys a shared profile may declare, enumerated from
+# the 13 profiles. YAML and the platform read keys case-sensitively, so `Tools` beside `tools` is an
+# unknown key, not a spelling of it; every key outside this tuple fails, naming the profile and the
+# key. Adding a key is a reviewed lint change, never a profile edit.
+KNOWN_KEYS = ("name", "description", "tools", "disable-model-invocation", "user-invocable")
+# Profile-level MCP servers could shadow the GitHub server or add undeclared tools; the key is
+# refused with its own message rather than as merely unknown.
 FORBIDDEN_KEYS = ("mcp-servers",)
 # The profile directory holds only profiles and its README; anything else is unreviewed input.
 ALLOWED_EXTRA_FILES = ("README.md",)
@@ -360,6 +366,11 @@ def check_configuration():
                     f"lint configuration: {role} allowlist pins {tool!r} but the capability matrix "
                     f"denies {capability}"
                 )
+    for key in KNOWN_KEYS:
+        if not FRONTMATTER_KEY.fullmatch(key):
+            raise ProfileError(f"lint configuration: known frontmatter key {key!r} is not a parsable key")
+        if key in FORBIDDEN_KEYS:
+            raise ProfileError(f"lint configuration: frontmatter key {key!r} is both known and forbidden")
 
 
 def check_profile(path, role, stem):
@@ -375,9 +386,14 @@ def check_profile(path, role, stem):
         problems.append(
             f"name must be the display form of the file name {stem!r}; the file name determines the role"
         )
-    for key in FORBIDDEN_KEYS:
-        if key in fields:
+    for key in fields:
+        if key in FORBIDDEN_KEYS:
             problems.append(f"{key} must not be declared in a shared profile")
+        elif key not in KNOWN_KEYS:
+            problems.append(
+                f"unknown frontmatter key {quote(key)}; "
+                f"a shared profile declares only {', '.join(KNOWN_KEYS)}"
+            )
     body = profile_body(text)
     for rule in RULES:
         problems.extend(check_rule(body, rule))
@@ -442,6 +458,28 @@ def classify(stem, review_profiles):
     return None
 
 
+def check_review_roles(review_roles, stems):
+    """Return the violations of the policy's review_roles (issue #11, PR #10 finding C2): every entry
+    must name a profile of the reviewer role class of CAPABILITY_MATRIX, and that profile must exist.
+    The Developer and the Producer are the other two classes: classify() applies their rules to their
+    file whatever the policy calls it, so a policy that lists one as a review role contradicts itself
+    without widening any capability, and fails here instead of passing silently."""
+    problems = []
+    review_profiles = set(review_roles.values())
+    for role, profile in sorted(review_roles.items()):
+        role_class = classify(profile, review_profiles)
+        if role_class != "reviewer":
+            problems.append(
+                f"{POLICY_FILE}: review role {quote(role)} names the {role_class} profile {quote(profile)}; "
+                "a review role must be a reviewer-class profile"
+            )
+        if profile not in stems:
+            problems.append(
+                f"{POLICY_FILE}: review role {quote(role)} names a missing profile {quote(profile)}"
+            )
+    return problems
+
+
 def check(root):
     check_configuration()
     problems = []
@@ -456,9 +494,7 @@ def check(root):
                 "only *.agent.md profiles and README.md belong here"
             )
     stems = {path.name[: -len(".agent.md")] for path in paths}
-    for role, profile in sorted(review_roles.items()):
-        if profile not in stems:
-            problems.append(f"{POLICY_FILE}: review role {role!r} names a missing profile {profile!r}")
+    problems.extend(check_review_roles(review_roles, stems))
     for path in paths:
         label = f"{PROFILE_DIR}/{path.name}"
         stem = path.name[: -len(".agent.md")]
