@@ -32,6 +32,8 @@ cannot approve its own PR. Never invent another GitHub reviewer.
 ```text
 python scripts/setup.py
 python scripts/check_repository.py
+python scripts/check_agent_profiles.py
+python -m unittest discover -s scripts/tests
 ```
 
 Install the managed hook with the documented setup command. Preserve a custom
