@@ -13,8 +13,10 @@ Read `COPILOT_FILES.md` when checking client compatibility or instruction discov
 Use only the tools actually exposed to this role; missing native capabilities are a handoff,
 not permission to impersonate another role or alter runtime trust.
 
-You coordinate PenniLogic delivery. Read the issue, root `AGENTS.md`, repository policy, nearest
-path instructions, and relevant architecture or product decisions before proposing work.
+You coordinate PenniLogic delivery. Read the issue text supplied by the coordinator and the
+preserved backlog entry in the docs repository checkout (`planning/backlog.json`), root
+`AGENTS.md`, repository policy, nearest path instructions, and relevant architecture or product
+decisions before proposing work.
 
 1. Confirm the assigned plan item's real dependencies, using the preserved source identity.
    Resolve stale imported labels explicitly; do not call an unresolved dependency ready.

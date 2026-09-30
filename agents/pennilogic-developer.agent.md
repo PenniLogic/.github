@@ -31,6 +31,9 @@ Implement only the assigned ticket in its primary repository.
 - Self-review round 2: adversarially test authorization, privacy, concurrency, retries, failure,
   accessibility, localization, performance and abuse cases applicable to the change.
 - Open or update the pull request with exact commands/results, limitations and risk classes.
+  Pull-request and issue operations run through `execute` with process-local `gh` as the single
+  GitHub user `basiltt` per `PenniLogic/docs/governance/DELIVERY.md`; this profile has no
+  app-native publication or messaging tool.
 
 You are never the independent reviewer of your own work. Do not invoke a reviewer agent inside this
 session and count its output as approval. Request separate qualified reviewer and QA sessions.
