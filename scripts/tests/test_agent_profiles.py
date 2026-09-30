@@ -233,6 +233,30 @@ class PlantedViolationTest(FixtureMixin, unittest.TestCase):
             problems = lint.check(root)
             self.assertTrue(any(stem in problem and "agent" in problem for problem in problems), problems)
 
+    def test_role_allowlists_are_pinned_exactly(self):
+        self.assertEqual(lint.ROLE_RULES["developer"]["tools"], {"read", "search", "edit", "execute"})
+        self.assertEqual(lint.ROLE_RULES["producer"]["tools"], {"read", "search"})
+        self.assertEqual(lint.ROLE_RULES["reviewer"]["tools"], {"read", "search", "execute"})
+        self.assertEqual(set(lint.ROLE_RULES), {"developer", "producer", "reviewer"})
+
+    def test_alias_outside_the_pinned_allowlist_fails_by_role(self):
+        root = self.make_root()
+        self.replace(root, lint.PRODUCER, '["read", "search"]', '["read", "search", "web"]')
+        self.assertViolation(root, lint.PRODUCER, "producer profiles must not list 'web'")
+        cases = (
+            (lint.PRODUCER, "todo", "producer"),
+            (lint.DEVELOPER, "web", "developer"),
+            ("pennilogic-qa", "todo", "reviewer"),
+            ("pennilogic-core-reviewer", "web", "reviewer"),
+        )
+        for stem, alias, role in cases:
+            root = self.make_root()
+            self.replace(root, stem, '"read", "search"', f'"read", "search", "{alias}"')
+            self.assertViolation(root, stem, f"{role} profiles must not list {alias!r}")
+        root = self.make_root()
+        self.replace(root, lint.PRODUCER, '["read", "search"]', '["read", "search", "WebFetch"]')
+        self.assertViolation(root, lint.PRODUCER, "compatible alias of 'web'")
+
     def test_wildcard_omitted_empty_and_string_tools_fail(self):
         stem = "pennilogic-design-reviewer"
         cases = (

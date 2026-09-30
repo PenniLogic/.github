@@ -37,9 +37,10 @@ creation or session messaging.
 - No profile lists `agent`. Roles are separated by session, never by delegation.
 - No review-role profile lists `edit`; reviewers and QA stay read-only.
 - The Producer lists neither `edit` nor `execute`.
-- The Developer lists `read`, `search`, `edit` and `execute`. Pull-request and issue operations
-  run through `execute` with process-local `gh` as the single GitHub user `basiltt`
-  (`PenniLogic/docs/governance/DELIVERY.md`).
+- The Developer lists `read`, `search`, `edit` and `execute`. There is one GitHub user and
+  multiple independent AI sessions (`PenniLogic/docs/governance/DELIVERY.md`); pull-request
+  and issue operations run through `execute` with the owner's `gh` credentials in the
+  session's own process, and no app-native publication or messaging tool is used.
 - Nobody uses `["*"]`, omits `tools`, or uses a server wildcard such as `github/*`.
 - `github/<tool>` may name only read-only GitHub MCP tools (`get_*`, `list_*`, `search_*`,
   `download_*`, `issue_read`, `pull_request_read`), and only when the role's rules in
@@ -69,6 +70,9 @@ Current allowlists:
 | `pennilogic-design-reviewer` | `read`, `search`, `execute` |
 | `pennilogic-reliability-reviewer` | `read`, `search`, `execute` |
 | `pennilogic-release-reviewer` | `read`, `search`, `execute` |
+
+`scripts/check_agent_profiles.py` pins these lists exactly per role: any other alias, including
+`web` and `todo`, fails for that role.
 
 Decision record (issue #1, 2026-09-30): the Producer keeps `["read", "search"]`; its duty reads
 the issue text supplied by the coordinator and the preserved backlog entry in the docs checkout

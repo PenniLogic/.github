@@ -36,12 +36,13 @@ FRONTMATTER_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
 DEVELOPER = "pennilogic-developer"
 PRODUCER = "pennilogic-producer"
 # Review roles come from agent-policy.json; every other profile must be one of these two.
+# "tools" pins each role's allowlist exactly: any other alias fails for that role.
 # "github" lists the github/<tool> names a role may declare; empty by the decision recorded
-# on issue #1 (2026-09-30). Extending it is an identity decision, not a profile edit.
+# on issue #1 (2026-09-30). Extending either set is a reviewed lint change, not a profile edit.
 ROLE_RULES = {
-    "developer": {"required": {"read", "edit", "execute"}, "forbidden": {"agent"}, "github": frozenset()},
-    "producer": {"required": {"read"}, "forbidden": {"agent", "edit", "execute"}, "github": frozenset()},
-    "reviewer": {"required": {"read"}, "forbidden": {"agent", "edit"}, "github": frozenset()},
+    "developer": {"tools": frozenset({"read", "search", "edit", "execute"}), "github": frozenset()},
+    "producer": {"tools": frozenset({"read", "search"}), "github": frozenset()},
+    "reviewer": {"tools": frozenset({"read", "search", "execute"}), "github": frozenset()},
 }
 # Profile-level MCP servers could shadow the GitHub server or add undeclared tools.
 FORBIDDEN_KEYS = ("mcp-servers",)
@@ -192,9 +193,10 @@ def check_profile(path, role):
             problems.append(f"tool {entry!r} is listed twice")
         present.append(name)
     rules = ROLE_RULES[role]
-    for tool in sorted(rules["forbidden"].intersection(present)):
+    aliases = {tool for tool in present if not tool.startswith("github/")}
+    for tool in sorted(aliases - rules["tools"]):
         problems.append(f"{role} profiles must not list {tool!r}")
-    for tool in sorted(rules["required"].difference(present)):
+    for tool in sorted(rules["tools"] - aliases):
         problems.append(f"{role} profiles must list {tool!r}")
     for tool in present:
         if tool.startswith("github/") and tool not in rules["github"]:
