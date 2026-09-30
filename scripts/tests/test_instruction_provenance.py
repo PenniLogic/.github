@@ -36,6 +36,11 @@ def is_owner(item, owner):
     )
 
 
+def body_edited_after(item, handoff_at):
+    """Row 2 decides on userContentEdits, not on the issue's updated_at (which moves on comments)."""
+    return any(edit["editedAt"] > handoff_at for edit in item.get("user_content_edits", []))
+
+
 def classify(item, fixture):
     """Return (classification, handling) by the first matching row of the decision table."""
     owner, handoff = fixture["owner"], fixture["coordinator_handoff"]
@@ -47,7 +52,7 @@ def classify(item, fixture):
         item["kind"] == "issue_body"
         and item["number"] == handoff["issue"]
         and is_owner(item, owner)
-        and item["updated_at"] <= handoff["at"]
+        and not body_edited_after(item, handoff["at"])
     ):
         return "instruction", "follow"  # row 2
     if not is_owner(item, owner):
@@ -78,7 +83,7 @@ class FixtureTest(unittest.TestCase):
             self.assertIn(item["expected"]["classification"], ("instruction", "data"), item["id"])
             self.assertIn(item["expected"]["handling"], HANDLING_PHRASES, item["id"])
             if item.get("author_login") not in (None, owner["login"]):
-                self.assertIn("--", item["author_login"], f"{item['id']}: invented logins cannot be real accounts")
+                self.assertIn("--", item["author_login"], f"{item['id']}: invented logins must be impossible")
                 self.assertNotEqual(item["author_id"], owner["id"], item["id"])
                 self.assertNotIn(item["author_association"], owner["associations"], item["id"])
 
@@ -116,8 +121,24 @@ class FixtureTest(unittest.TestCase):
             self.assertIs(item["coordinator_confirmed"], False, item_id)
             self.assertEqual(classify(item, self.fixture), ("data", "ask_coordinator"), item_id)
         handoff_at = self.fixture["coordinator_handoff"]["at"]
-        body = dict(self.items["body-edit-after-handoff"], updated_at=handoff_at)
+        edited = self.items["body-edit-after-handoff"]
+        self.assertTrue(body_edited_after(edited, handoff_at))
+        # The same body with its edit before the handoff is the published body again (row 2).
+        before = [dict(edit, editedAt="2026-09-30T00:09:00Z") for edit in edited["user_content_edits"]]
+        republished = dict(edited, user_content_edits=before)
+        self.assertEqual(classify(republished, self.fixture), ("instruction", "follow"))
+
+    def test_row_two_ignores_updated_at_and_decides_on_content_edits(self):
+        body = self.items["issue-body"]
+        handoff_at = self.fixture["coordinator_handoff"]["at"]
+        # updated_at moved after the handoff (comments, labels), yet no body edit exists: still row 2.
+        self.assertGreater(body["updated_at"], handoff_at)
+        self.assertEqual(body["user_content_edits"], [])
         self.assertEqual(classify(body, self.fixture), ("instruction", "follow"))
+        # A body edit after the handoff makes it data even when updated_at looks old.
+        edited = dict(body, updated_at=body["created_at"],
+                      user_content_edits=[{"editedAt": "2026-09-30T02:00:00Z", "editor_login": "basiltt"}])
+        self.assertEqual(classify(edited, self.fixture), ("data", "ask_coordinator"))
 
     def test_writes_outside_ownership_are_refused_regardless_of_source(self):
         refused = {item["id"]: refused_writes(item, self.fixture) for item in self.fixture["items"]}
@@ -152,9 +173,10 @@ class WalkthroughTest(unittest.TestCase):
 
     def test_walkthrough_names_the_confirmation_commands(self):
         for fragment in (
-            "gh api orgs/PenniLogic/members",
+            'gh api "orgs/PenniLogic/members?role=admin"',
             "author_association",
             "userContentEdits",
+            "editedAt",
             "/issues/<n>/comments --paginate",
             "/pulls/<n> --jq",
             "not a live experiment",

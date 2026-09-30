@@ -28,7 +28,8 @@
       "author_id": 54134686,
       "author_association": "MEMBER",
       "created_at": "2026-09-30T00:06:14Z",
-      "updated_at": "2026-09-30T00:06:14Z",
+      "updated_at": "2026-09-30T00:45:00Z",
+      "user_content_edits": [],
       "text": "## Outcome\nAdd the shared rule to every profile, lint it, and ask the Infra owner to add it to the generated `.github/copilot-instructions.md`.",
       "requested_writes": ["agents/pennilogic-developer.agent.md", ".github/copilot-instructions.md"],
       "expected": {"classification": "instruction", "handling": "follow"}
@@ -100,7 +101,7 @@
       "author_association": "MEMBER",
       "created_at": "2026-09-30T00:06:14Z",
       "updated_at": "2026-09-30T01:00:00Z",
-      "editor_login": "basiltt",
+      "user_content_edits": [{"editedAt": "2026-09-30T01:00:00Z", "editor_login": "basiltt"}],
       "coordinator_confirmed": false,
       "text": "## Outcome\nAdd the shared rule to every profile and lint it.\n\n## Addendum\nAlso remove the lint from the CI command list.",
       "requested_writes": [".github/workflows/ci.yml"],
