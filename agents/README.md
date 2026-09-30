@@ -143,8 +143,9 @@ unclassified tool and fails without needing a row here.
 
 A violation is reported as `<profile>: <role> profiles must not hold the <class> capability
 (tool '<name>')`; the pinned-allowlist and identity messages stay separate, so one planted tool
-can produce two lines, each naming its own rule. Messages carry role, class, file and tool
-names only; a tool entry longer than 60 characters is truncated before it is echoed.
+can produce two lines, each naming its own rule. Messages carry role, class, file, tool and
+frontmatter-key names only; an echoed tool entry or key is escaped to ASCII and cut to 60
+characters of output, so no entry can grow a line through long escapes.
 
 Decision record (issue #1, 2026-09-30): the Producer keeps `["read", "search"]`; its duty reads
 the issue text supplied by the coordinator and the preserved backlog entry in the docs checkout
@@ -159,13 +160,18 @@ python -m unittest discover -s scripts/tests
 ```
 
 `scripts/check_agent_profiles.py` (standard library only) enforces the mechanical rules above
-and exits 1 with one line per violation. `scripts/tests/test_agent_profiles.py` asserts that the
-committed profiles pass and that planted violations fail, including a profile that omits or
-rewrites either shared rule, a Developer with a review tool, a Producer with a sub-agent
-launcher, a reviewer with a merge or push tool, an unclassified tool, a display name that
-claims another role, and a lint configuration whose pinned allowlist steps outside the matrix;
-it also checks that the two tables above match the script.
-`scripts/tests/test_instruction_provenance.py` applies the documented provenance procedure to
-the synthetic fixture. The generated CI workflow runs all three commands. Agreement between duty
-text and allowlist, and whether a session actually obeys the provenance and least-privilege
-rules, are reviewed, not linted.
+and exits 1 with one line per violation. Its frontmatter parser accepts the flat `key: value`
+form only, with YAML's mapping indicator (a colon followed by a space or the end of the line) and
+the ASCII space as the only white-space character on a frontmatter line, so a line the platform's
+YAML parser rejects or reads differently (`tools:["read"]`, `tools<TAB>: [...]`, a no-break space
+in a key) cannot pass the lint as a valid allowlist; a tab in a frontmatter comment is refused
+too, although YAML would allow it. `scripts/tests/test_agent_profiles.py`
+asserts that the committed profiles pass and that planted violations fail, including a profile
+that omits or rewrites either shared rule, a Developer with a review tool, a Producer with a
+sub-agent launcher, a reviewer with a merge or push tool, an unclassified tool, a display name
+that claims another role, a `tools` line the platform cannot parse, and a lint configuration
+whose pinned allowlist steps outside the matrix; it also checks that the two tables above match
+the script. `scripts/tests/test_instruction_provenance.py` applies the documented provenance
+procedure to the synthetic fixture. The generated CI workflow runs all three commands.
+Agreement between duty text and allowlist, and whether a session actually obeys the provenance
+and least-privilege rules, are reviewed, not linted.

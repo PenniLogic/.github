@@ -36,8 +36,9 @@ GITHUB_READ_TOOL = re.compile(
 )
 GITHUB_TOOL_NAME = re.compile(r"github/[a-z][a-z0-9_]*")
 FRONTMATTER_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]*")
-# Echoed tool entries are bounded so that a planted entry cannot carry arbitrary text into
-# check output; everything else the check prints is a role, a class or a file name.
+# Echoed tool entries and frontmatter keys are escaped to ASCII and cut to this many output
+# characters, so a planted entry cannot carry arbitrary text into check output; everything else
+# the check prints is a role, a class or a file name.
 ECHO_LIMIT = 60
 
 # Issue #9 (threat-model finding E31-F05): the capability matrix is the least-privilege rule in
@@ -145,6 +146,16 @@ class ProfileError(ValueError):
     """A profile cannot be checked or violates the stated policy."""
 
 
+def quote(entry):
+    """ascii() of a tool entry or frontmatter key, cut to ECHO_LIMIT characters *after* escaping, so
+    check output never carries arbitrary profile text, stays one printable-ASCII line on any console
+    (a homoglyph shows as its escape) and cannot grow past the limit through long escapes."""
+    text = ascii(entry[:ECHO_LIMIT])
+    if len(text) > ECHO_LIMIT:
+        text = text[: ECHO_LIMIT - 4] + "..." + text[-1]
+    return text
+
+
 def unquote(value, line_number):
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         return value[1:-1]
@@ -199,20 +210,31 @@ def parse_frontmatter(text):
     except ValueError:
         raise ProfileError("frontmatter is not closed by '---'") from None
     fields = {}
+    # YAML gives these lines no white space other than the ASCII space: PyYAML 6.0.3 rejects a tab
+    # anywhere on them (key, indicator, value, block item) and reads U+00A0 as key or value content,
+    # so a key the lint would strip to `tools` is a different key for the platform. Refuse the line.
+    for number, line in enumerate(lines[1:end], start=2):
+        if any(char.isspace() and char != " " for char in line):
+            raise ProfileError(f"malformed frontmatter at line {number}")
     index = 1
     while index < end:
         line = lines[index]
         index += 1
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if line[0] in " \t":
+        if line[0] == " ":
             raise ProfileError(f"unsupported nested frontmatter at line {index}")
         key, separator, value = line.partition(":")
+        # YAML's mapping indicator is the colon followed by a space or the end of the line; a value
+        # glued to the colon (`tools:["read"]`) is a scanner error for the platform, so the lint must
+        # not read a `tools` list from a line the platform cannot parse.
+        if not separator or value[:1] not in ("", " "):
+            raise ProfileError(f"malformed frontmatter at line {index}")
         key = key.strip()
-        if not separator or not FRONTMATTER_KEY.fullmatch(key):
+        if not FRONTMATTER_KEY.fullmatch(key):
             raise ProfileError(f"malformed frontmatter at line {index}")
         if key in fields:
-            raise ProfileError(f"duplicate frontmatter key {key!r}")
+            raise ProfileError(f"duplicate frontmatter key {quote(key)}")
         value = value.strip()
         if value == "":
             items = None
@@ -267,14 +289,6 @@ def check_provenance_rule(body):
 
 def check_least_privilege_rule(body):
     return check_rule(body, RULES[1])
-
-
-def quote(entry):
-    """ascii() of a tool entry, truncated so check output never carries arbitrary profile text and
-    stays printable on any console (a homoglyph shows as its escape)."""
-    if len(entry) > ECHO_LIMIT:
-        entry = entry[: ECHO_LIMIT - 3] + "..."
-    return ascii(entry)
 
 
 def classify_tool(entry):

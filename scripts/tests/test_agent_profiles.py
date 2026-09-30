@@ -252,10 +252,77 @@ class FrontmatterParserTest(unittest.TestCase):
             "block item without space": "---\ntools:\n-read\n---\n",
             "malformed line": "---\njust words\n---\n",
             "bad key": "---\n1name: A\n---\n",
+            "no-space colon": '---\ntools:["read"]\n---\n',
+            "tab in key": '---\ntools\t: ["read"]\n---\n',
+            "tab after colon": '---\ntools:\t["read"]\n---\n',
         }
         for label, text in cases.items():
             with self.assertRaises(lint.ProfileError, msg=label):
                 lint.parse_frontmatter(text)
+
+    def test_mapping_indicator_is_colon_space_or_end_of_line(self):
+        # What PyYAML 6.0.3 rejects (ScannerError) the lint must not read as a `tools` list.
+        rejected = ('tools:["read"]', 'tools\t: ["read"]', 'tools:\t["read"]', 'name:PenniLogic',
+                    'tools:\t', 'name\t:A')
+        for line in rejected:
+            with self.assertRaises(lint.ProfileError, msg=line) as caught:
+                lint.parse_frontmatter(f"---\nname: A\n{line}\n---\n")
+            self.assertEqual(str(caught.exception), "malformed frontmatter at line 3", line)
+        # What PyYAML accepts stays accepted, with the same value.
+        accepted = {
+            'tools: ["read"]': ["read"],
+            'tools : ["read"]': ["read"],
+            'tools:  ["read"]': ["read"],
+            'tools: ["read"] ': ["read"],
+            "tools:": None,
+            "tools: ": None,
+            "description: see https://x.y/z": "see https://x.y/z",
+        }
+        for line, value in accepted.items():
+            fields = lint.parse_frontmatter(f"---\nname: A\n{line}\n---\n")
+            self.assertEqual(fields[list(fields)[-1]], value, line)
+        for path in lint.profile_paths(REPO):
+            fields = lint.parse_frontmatter(path.read_text(encoding="utf-8"))
+            self.assertIsInstance(fields["tools"], list, path.name)
+            self.assertTrue(fields["tools"], path.name)
+
+    def test_only_the_ascii_space_is_white_space_in_frontmatter(self):
+        # Verified against PyYAML 6.0.3: a tab anywhere on these lines is a ScannerError, U+000B and
+        # U+000C are ReaderErrors, a U+00A0 before the colon makes the key 'tools\xa0' (no `tools`
+        # key for the platform) and a U+00A0 after the value or alone on a line is a parse error.
+        # The lint refuses every such line; the only stricter cases are a tab inside a comment and a
+        # U+00A0 inside quoted content, which PyYAML would accept.
+        rejected = (
+            ("tools\u00a0: [\"read\"]", 3), ("tools\x0c: [\"read\"]", 3), ("tools\x0b: [\"read\"]", 3),
+            ("tools: [\"read\"]\u00a0", 3), ("tools: [\"read\"]\t", 3), ("\u00a0", 3),
+            ("tools: [\"read\",\t\"search\"]", 3), ("description: a\tb", 3), ("# c\tc", 3),
+            ("tools:\n  - read\t", 4), ("tools:\n  -\tread", 4), ("tools:\n\t- read", 4),
+            ("tools: [\"re\u00a0ad\"]", 3),
+        )
+        for lines, number in rejected:
+            with self.assertRaises(lint.ProfileError, msg=ascii(lines)) as caught:
+                lint.parse_frontmatter(f"---\nname: A\n{lines}\n---\n")
+            self.assertEqual(str(caught.exception), f"malformed frontmatter at line {number}", ascii(lines))
+        # Body text is free: the rule covers the frontmatter only.
+        fields = lint.parse_frontmatter("---\nname: A\ntools: []\n---\n\tbody\u00a0text\n")
+        self.assertEqual(fields, {"name": "A", "tools": []})
+        # Repository profiles contain no such character in their frontmatter.
+        for path in lint.profile_paths(REPO):
+            text = path.read_text(encoding="utf-8")
+            frontmatter = text.split("---\n", 2)[1]
+            self.assertFalse(any(char.isspace() and char not in " \n" for char in frontmatter), path.name)
+
+    def test_duplicate_key_echo_is_bounded(self):
+        key = "k" * 5000
+        with self.assertRaises(lint.ProfileError) as caught:
+            lint.parse_frontmatter(f"---\n{key}: A\n{key}: B\n---\n")
+        message = str(caught.exception)
+        self.assertTrue(message.startswith("duplicate frontmatter key 'kkk"), message)
+        self.assertLessEqual(len(message), len("duplicate frontmatter key ") + lint.ECHO_LIMIT)
+        self.assertTrue(message.endswith("...'"), message)
+        with self.assertRaises(lint.ProfileError) as caught:
+            lint.parse_frontmatter("---\nname: A\nname: B\n---\n")
+        self.assertEqual(str(caught.exception), "duplicate frontmatter key 'name'")
 
 
 class ToolEntryTest(unittest.TestCase):
@@ -308,18 +375,30 @@ class ToolEntryTest(unittest.TestCase):
         with self.assertRaises(lint.ProfileError):
             lint.canonical_tool(True)
 
-    def test_echoed_entries_are_bounded(self):
+    def test_echoed_entries_are_bounded_after_escaping(self):
+        limit = lint.ECHO_LIMIT
         planted = "github/" + "x" * 300
         message = str(self.assertRaisesMessage(planted))
         self.assertLess(len(message), len(planted))
         self.assertIn("...", message)
-        self.assertLessEqual(message.count("x"), lint.ECHO_LIMIT)
+        self.assertLessEqual(message.count("x"), limit)
         self.assertEqual(lint.quote("read"), "'read'")
-        self.assertEqual(lint.quote("a" * lint.ECHO_LIMIT), repr("a" * lint.ECHO_LIMIT))
-        self.assertEqual(lint.quote("a" * (lint.ECHO_LIMIT + 1)), repr("a" * (lint.ECHO_LIMIT - 3) + "..."))
+        # The bound applies to the escaped output, quotes included: 58 characters fit, 59 do not.
+        self.assertEqual(lint.quote("a" * (limit - 2)), repr("a" * (limit - 2)))
+        self.assertEqual(lint.quote("a" * (limit - 1)), "'" + "a" * (limit - 5) + "...'")
+        self.assertEqual(len(lint.quote("a" * (limit - 1))), limit)
         self.assertEqual(lint.quote("tab\tand\nnewline"), "'tab\\tand\\nnewline'")
         self.assertEqual(lint.quote("r\u0435ad"), "'r\\u0435ad'")
-        self.assertTrue(lint.quote("\u2603" * 200).isascii())
+        # Long escapes cannot grow the output past the limit (C1): astral and BMP characters alike.
+        for entry in ("\U0001F600" * 59, "\u2603" * 59, "\u2603" * 200, "\x1b[2J" * 100, "x" * 10240):
+            echoed = lint.quote(entry)
+            self.assertEqual(len(echoed), limit, ascii(entry[:8]))
+            self.assertTrue(echoed.isascii(), ascii(entry[:8]))
+            self.assertNotIn("\n", echoed)
+            self.assertTrue(echoed.endswith("...'"), echoed)
+        # The closing quote follows the escaped form's own delimiter.
+        self.assertTrue(lint.quote("it's " + "x" * 100).endswith('..."'))
+        self.assertLessEqual(len(lint.quote("it's " + "x" * 100)), limit)
 
     def assertRaisesMessage(self, entry):
         with self.assertRaises(lint.ProfileError) as caught:
@@ -1023,6 +1102,23 @@ class PlantedViolationTest(FixtureMixin, unittest.TestCase):
         root = self.make_root()
         self.write(root, lint.PRODUCER, 'name: N\ndescription: D\ntools: ["read", "search"]\n')
         self.assertViolation(root, lint.PRODUCER, "frontmatter must start with '---'")
+
+    def test_frontmatter_the_platform_cannot_parse_fails(self):
+        # PyYAML 6.0.3 raises ScannerError on each of these; the head lint before this test read a
+        # valid `tools` list from them, so a lint-green profile could reach the platform unparsed.
+        allowlist = 'tools: ["read", "search", "execute"]'
+        for stem in ("pennilogic-qa", "pennilogic-core-reviewer"):
+            for planted in ('tools:["read", "search", "execute"]', 'tools\t: ["read", "search", "execute"]',
+                            'tools:\t["read", "search", "execute"]'):
+                root = self.make_root()
+                self.replace(root, stem, allowlist, planted)
+                matching = self.assertViolation(root, stem, "malformed frontmatter at line 4")
+                self.assertEqual(len(matching), 1, matching)
+        # Valid YAML spellings keep passing, and the 13 committed profiles are untouched by the rule.
+        root = self.make_root()
+        self.replace(root, "pennilogic-qa", allowlist, 'tools : ["read", "search", "execute"]')
+        self.assertEqual(lint.check(root), [])
+        self.assertEqual(lint.check(REPO), [])
 
     def test_unclassified_profile_fails(self):
         root = self.make_root()
